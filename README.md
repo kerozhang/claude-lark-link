@@ -57,12 +57,12 @@ claude-lark-link serve
 
 ## 连接与指令
 
-| 连接方式 | 如何使用 |
+| `desktop_connection_mode` | 如何使用 |
 | --- | --- |
-| `manual`，默认 | 在目标 Desktop 会话输入 `/lark-link`，再在两分钟内向机器人私聊发送 `/bind 配对码`。桥接重启后重新配对。 |
-| `auto` | 在 `~/.claude-lark-link/config.json` 写入 `"desktop_connection_mode": "auto"`，并将 `allow_auto_connect` 设为 `true`，然后重启桥接。插件为已打开且加载它的授权 Desktop 会话登记，私聊发送 `/sessions` 查看。 |
+| `"manual"`，默认，或不写该字段 | 在目标 Desktop 会话输入 `/lark-link`，再在两分钟内向机器人私聊发送 `/bind 配对码`。桥接重启后重新配对。 |
+| `"auto"` | 在 `~/.claude-lark-link/config.json` 写入 `"desktop_connection_mode": "auto"`，并将 `allow_auto_connect` 设为 `true`，然后重启桥接。插件为已打开且加载它的授权 Desktop 会话登记，私聊发送 `/sessions` 查看。 |
 
-连接方式只由桥接配置的 `desktop_connection_mode` 决定，未写入或值无效时按 `manual` 处理；新打开或重新打开的 Code 会话会采用最新值。自动连接仍须同时开启 `allow_auto_connect` 并匹配授权目录。
+两种方式都存在，切换只写桥接配置；Claude Desktop 的插件设置页不再提供连接方式选项。未写入或值无效时按 `manual` 处理，新打开或重新打开的 Code 会话会采用最新值。自动连接仍须同时开启 `allow_auto_connect` 并匹配授权目录。
 
 | 飞书私聊指令 | 操作 |
 | --- | --- |
@@ -77,7 +77,7 @@ claude-lark-link serve
 
 Install the Python bridge from GitHub with the pip command above. Run `claude-lark-link init`, enter your app credentials and app-scoped owner Open ID in the generated `.env`, and list exact local workspace directories in `config.json`. Enable the bot and its private message permissions. Subscribe to `im.message.receive_v1` and `card.action.trigger` using the platform's long-connection option. Start the bridge with `claude-lark-link serve` and install `lark-link` from the GitHub marketplace `kerozhang/claude-lark-link` in Claude Desktop Code.
 
-Manual pairing is the default. Run `/lark-link` in the target Desktop session and send `/bind <code>` in the bot's private chat. To connect automatically, set `allow_auto_connect` to `true` and `desktop_connection_mode` to `auto` in the bridge config, then restart the bridge. Closed sessions and conversation history are outside the scope of discovery. Use `/sessions`, `/send <task>`, `/model` and `/unbind` from the configured private chat. Host-managed gateway models are changed in Desktop.
+Manual pairing is the default. Run `/lark-link` in the target Desktop session and send `/bind <code>` in the bot's private chat. To connect automatically, set `allow_auto_connect` to `true` and `desktop_connection_mode` to `auto` in the bridge config, then restart the bridge; the plugin itself has no mode switch. Closed sessions and conversation history are outside the scope of discovery. Use `/sessions`, `/send <task>`, `/model` and `/unbind` from the configured private chat. Host-managed gateway models are changed in Desktop.
 
 ## 许可证 / License
 
