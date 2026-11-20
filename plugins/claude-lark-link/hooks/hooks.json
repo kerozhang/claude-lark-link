@@ -1,0 +1,14 @@
+{
+  "modules": ["./register.ts"],
+  "hooks": {
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "python", "args": ["-I", "${CLAUDE_PLUGIN_ROOT}/hooks/forward.py"], "timeout": 5, "onFailure": "continue"}]}],
+    "PermissionRequest": [{"hooks": [{"type": "command", "command": "python", "args": ["-I", "${CLAUDE_PLUGIN_ROOT}/hooks/forward.py"], "timeout": 130, "onFailure": "continue"}]}],
+    "Elicitation": [{"hooks": [{"type": "command", "command": "python", "args": ["-I", "${CLAUDE_PLUGIN_ROOT}/hooks/forward.py"], "timeout": 130, "onFailure": "continue"}]}],
+    "Notification": [{"matcher": "permission_prompt|elicitation_dialog|elicitation_url_dialog", "hooks": [{"type": "command", "command": "python", "args": ["-I", "${CLAUDE_PLUGIN_ROOT}/hooks/forward.py"], "timeout": 5, "onFailure": "continue"}]}],
+    "PostToolUse": [{"matcher": "Read|Grep|Glob|Edit|Write|Bash|PowerShell|Agent|WebFetch|WebSearch|AskUserQuestion|ExitPlanMode", "hooks": [{"type": "command", "command": "python", "args": ["-I", "${CLAUDE_PLUGIN_ROOT}/hooks/forward.py"], "timeout": 5, "onFailure": "continue"}]}],
+    "PostToolUseFailure": [{"matcher": "Read|Grep|Glob|Edit|Write|Bash|PowerShell|Agent|WebFetch|WebSearch|AskUserQuestion|ExitPlanMode", "hooks": [{"type": "command", "command": "python", "args": ["-I", "${CLAUDE_PLUGIN_ROOT}/hooks/forward.py"], "timeout": 5, "onFailure": "continue"}]}],
+    "Stop": [{"hooks": [{"type": "command", "command": "python", "args": ["-I", "${CLAUDE_PLUGIN_ROOT}/hooks/forward.py"], "timeout": 5, "onFailure": "continue"}]}],
+    "StopFailure": [{"hooks": [{"type": "command", "command": "python", "args": ["-I", "${CLAUDE_PLUGIN_ROOT}/hooks/forward.py"], "timeout": 5, "onFailure": "continue"}]}],
+    "SessionEnd": [{"hooks": [{"type": "command", "command": "python", "args": ["-I", "${CLAUDE_PLUGIN_ROOT}/hooks/forward.py"], "timeout": 5, "onFailure": "continue"}]}]
+  }
+}

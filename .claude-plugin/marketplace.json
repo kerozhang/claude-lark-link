@@ -1,0 +1,8 @@
+{
+  "name": "lark-link",
+  "owner": {"name": "Claude Lark Link contributors"},
+  "description": "Local bridge plugin for Claude Desktop Code and Feishu / Lark.",
+  "plugins": [
+    {"name": "lark-link", "source": "./plugins/claude-lark-link", "description": "Link your Claude Desktop Code sessions to a private Feishu or Lark chat."}
+  ]
+}
