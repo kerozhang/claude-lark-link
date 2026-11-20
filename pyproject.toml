@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-lark-link"
-version = "0.1.0"
+version = "0.1.1"
 description = "Control local Claude Desktop Code sessions from Feishu / Lark — send tasks, view progress, approve permissions, answer questions, and switch models."
 readme = "README.md"
 license = "MIT"

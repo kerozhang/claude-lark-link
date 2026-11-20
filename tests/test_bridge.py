@@ -14,7 +14,7 @@ import httpx
 import pytest
 
 from claude_lark_link.api import create_app
-from claude_lark_link.cards import DESKTOP_ACTION
+from claude_lark_link.cards import DESKTOP_ACTION, DESKTOP_SESSIONS_ACTION
 from claude_lark_link.config import BridgeConfig, initialize, load_config
 from claude_lark_link.inbox import DesktopInbox
 from claude_lark_link.protocol import REMOTE_TASK_PREFIX, SIGNATURE_HEADER, remote_task_fingerprint
@@ -274,6 +274,33 @@ async def test_sensitive_file_preview_never_leaves_desktop(config, setup):
     assert (await transport.on_card(click(config, pending.message, request, "allow")))["toast"]["type"] == "error"
     assert (await transport.on_card(click(config, pending.message, request, "deny")))["toast"]["type"] == "success"
     assert await review == "deny"
+
+
+async def test_sessions_card_accepts_microsecond_and_string_callbacks(config, setup):
+    _, bridge, transport, _, cards = setup
+    bridge.config = replace(config, allow_auto_connect=True)
+    who = target(config)
+    ticket = bridge.local_inbox({**who, "op": "auto"})["ticket"]
+    await transport.on_message(incoming(config, "/sessions"))
+    message = cards[-1][1]
+    sid = bridge.session_key(who)[1]
+
+    def press(created, *, value=None, form=None):
+        action = NS(value=value or {"action": DESKTOP_SESSIONS_ACTION, "request": "list", "decision": "send"},
+                    form_value=form)
+        payload = NS(operator=NS(open_id=OWNER), context=NS(open_chat_id=CHAT, open_message_id=message), action=action)
+        return event(config, payload, created=created)
+
+    now_ms = int(time() * 1000)
+    assert (await transport.on_card(press(now_ms, form=json.dumps({"session": sid, "task": "111"}))))["toast"]["type"] == "success"
+    for _ in range(5):
+        await asyncio.sleep(0)
+    claimed = bridge.local_inbox({**who, "op": "poll", "ticket": ticket, "ready": True, "model_control": True})
+    assert claimed["task"] == "111"
+    assert bridge.stats["claim"] == 1
+    refresh = {"action": DESKTOP_SESSIONS_ACTION, "request": "list", "decision": "recent"}
+    assert (await transport.on_card(press(now_ms * 1000, value=refresh)))["toast"]["type"] == "success"
+    assert (await transport.on_card(press(now_ms - 200_000, value=refresh)))["toast"]["type"] == "error"
 
 
 def test_init_keeps_secrets_in_separate_env_files(tmp_path):

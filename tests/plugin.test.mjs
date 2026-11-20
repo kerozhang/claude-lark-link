@@ -12,16 +12,17 @@ mock.method(crypto.subtle, 'digest', async (algorithm, body) => {
   return Uint8Array.from(createHash('sha256').update(body).digest()).buffer
 })
 
-function mount(mode, responder, { desktop = true, managed = false, drop = false } = {}) {
+function mount(mode, responder, { desktop = true, managed = false, drop = false, localConfig = {} } = {}) {
   const hooks = {}
   const calls = []
   const tasks = []
   const changes = []
+  const config = { ...(mode ? { desktop_connection_mode: mode } : {}), ...localConfig }
   let currentSession = session
   let pulse
   let model = 'sonnet'
   const engine = {
-    fs: { read: async (path) => path.endsWith('/config.json') ? '{}' : `CLAUDE_LARK_HOOK_TOKEN=${ticket}` },
+    fs: { read: async (path) => path.endsWith('/config.json') ? JSON.stringify(config) : `CLAUDE_LARK_HOOK_TOKEN=${ticket}` },
     http: { fetch: async (url, request) => {
       assert.equal(url, 'http://127.0.0.1:8765/api/v1/inbox')
       const mac = value => createHmac('sha256', Buffer.from(ticket, 'hex')).update(value).digest('hex')
@@ -54,7 +55,7 @@ function mount(mode, responder, { desktop = true, managed = false, drop = false 
       return drop ? { drop: 'native refusal detail' } : { text }
     } },
   }
-  register((name, matcher, handler) => { hooks[name] = handler ?? matcher }, { connection_mode: mode })
+  register((name, matcher, handler) => { hooks[name] = handler ?? matcher }, {})
   return {
     calls, tasks, changes,
     open: () => hooks['session.start'](engine, { isInteractive: !desktop }, async () => ({})),
@@ -92,6 +93,27 @@ test('auto retries after lost connection but pauses until manually resumed', asy
   assert.match((await app.pair()).text, /已登记/)
   assert.equal(app.calls.at(-1).op, 'resume')
 })
+
+test('auto mode comes from the local bridge configuration', async () => {
+  const app = mount('auto', ({ op }) => op === 'auto' || op === 'resume' ? { ticket } : { connected: true })
+  await app.open()
+  await app.tick()
+  await app.tick()
+  assert.deepEqual(app.calls.map(row => row.op), ['auto'])
+  assert.match((await app.pair()).text, /已登记/)
+  assert.equal(app.calls.at(-1).op, 'resume')
+})
+
+for (const override of ['manual', 'invalid']) {
+  test(`no automatic enrollment for ${override}`, async () => {
+    const app = mount(undefined, () => ({ code, ticket }), { localConfig: { desktop_connection_mode: override } })
+    await app.open()
+    await app.tick()
+    assert.deepEqual(app.calls, [])
+    assert.match((await app.pair()).text, /\/bind/)
+    assert.deepEqual(app.calls.map(row => row.op), ['pair'])
+  })
+}
 
 test('auto mode does not attach a terminal session', async () => {
   const app = mount('auto', () => ({ ticket }), { desktop: false })

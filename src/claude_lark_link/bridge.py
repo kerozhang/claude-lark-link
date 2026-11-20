@@ -81,6 +81,8 @@ class Bridge:
         self.reviews: dict[str, PendingReview] = {}
         self.lists: dict[tuple[str, str], tuple[float, str]] = {}
         self.background: set[asyncio.Task] = set()
+        # Counts only, so a stalled plugin poll can be told apart from a missed task.
+        self.stats = {"auto": 0, "poll": 0, "claim": 0, "busy": 0}
 
     def spawn(self, work) -> None:
         async def guarded() -> None:
@@ -116,7 +118,10 @@ class Bridge:
         if op == "pair":
             return self.inbox.enroll(*key)
         if op in ("auto", "resume"):
-            return self.inbox.auto_enroll(*key, resume=op == "resume") if self.config.allow_auto_connect else {"reason": "auto_disabled"}
+            result = self.inbox.auto_enroll(*key, resume=op == "resume") if self.config.allow_auto_connect else {"reason": "auto_disabled"}
+            if result.get("ticket"):
+                self.stats["auto"] += 1
+            return result
         ticket = payload.get("ticket")
         if not isinstance(ticket, str) or not TOKEN.fullmatch(ticket):
             return {}
@@ -133,6 +138,11 @@ class Bridge:
             *key, ticket, ready=payload.get("ready") is True, model_capable=payload.get("model_control") is True,
             model_response=payload.get("model_response"),
         )
+        self.stats["poll"] += 1
+        if payload.get("ready") is not True:
+            self.stats["busy"] += 1
+        if isinstance(item, DesktopDelivery):
+            self.stats["claim"] += 1
         if isinstance(item, DesktopModelRequest):
             return {"connected": True, "model_request": {"request": item.request, "model": item.model}}
         if item:

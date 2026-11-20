@@ -1,15 +1,6 @@
 {
   "name": "lark-link",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "author": {"name": "Claude Lark Link contributors"},
-  "description": "Link opted-in Claude Desktop Code sessions to a private Feishu or Lark chat.",
-  "userConfig": {
-    "connection_mode": {
-      "type": "string",
-      "title": "连接方式 / Connection mode",
-      "description": "manual uses a one-time pairing code. auto registers this open Desktop session if the local bridge allows its workspace.",
-      "options": ["manual", "auto"],
-      "default": "manual"
-    }
-  }
+  "description": "Link opted-in Claude Desktop Code sessions to a private Feishu or Lark chat."
 }

@@ -52,11 +52,31 @@ async function hmac(key: Uint8Array, message: string): Promise<string> {
   return hex(new Uint8Array(await crypto.subtle.digest('SHA-256', outer)))
 }
 
-async function request($: EngineInterface, state: State, payload: object): Promise<Reply | undefined> {
+async function configDirectory($: EngineInterface): Promise<string | undefined> {
   const home = await $.env.get('USERPROFILE') || await $.env.get('HOME')
-  if (!home || !/^(?:[A-Za-z]:[\\/]|\/(?!\/))/.test(home)) return
-  const directory = `${home}/.claude-lark-link`
-  const config = JSON.parse((await $.fs.read(`${directory}/config.json`)).replace(/^﻿/, ''))
+  if (home && /^(?:[A-Za-z]:[\\/]|\/(?!\/))/.test(home)) return `${home}/.claude-lark-link`
+}
+
+async function readConfig($: EngineInterface, directory: string) {
+  return JSON.parse((await $.fs.read(`${directory}/config.json`)).replace(/^﻿/, ''))
+}
+
+// The bridge config is the only source of the connection mode.
+async function modeOverride($: EngineInterface): Promise<'manual' | 'auto' | undefined> {
+  try {
+    const directory = await configDirectory($)
+    if (!directory) return
+    const mode = (await readConfig($, directory)).desktop_connection_mode
+    if (mode === 'manual' || mode === 'auto') return mode
+  } catch {
+    // Fall back to the plugin setting when the local file is absent or invalid.
+  }
+}
+
+async function request($: EngineInterface, state: State, payload: object): Promise<Reply | undefined> {
+  const directory = await configDirectory($)
+  if (!directory) return
+  const config = await readConfig($, directory)
   const port = config.port ?? 8765
   const prefix = config.api_prefix ?? '/api/v1'
   if (!Number.isInteger(port) || port < 1 || port > 65535 || typeof prefix !== 'string' ||
@@ -190,9 +210,9 @@ function startTimer($: EngineInterface, state: State) {
   })
 }
 
-export const register: Register = (on, options) => {
+export const register: Register = (on) => {
   const state: State = {
-    automatic: options.connection_mode === 'auto', epoch: 0, ticket: '', halted: false,
+    automatic: false, epoch: 0, ticket: '', halted: false,
     session: '', cwd: '', inFlight: false, submitting: false,
   }
   let interactive = false
@@ -200,7 +220,10 @@ export const register: Register = (on, options) => {
     interactive = e.isInteractive
     await $.command.register({ name: COMMAND, description: '将当前 Claude Desktop 会话连接到飞书私聊' })
     const result = await next(e)
-    if (state.automatic && !interactive) startTimer($, state)
+    if (!interactive) {
+      state.automatic = (await modeOverride($)) === 'auto'
+      if (state.automatic) startTimer($, state)
+    }
     return result
   })
 

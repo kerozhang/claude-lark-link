@@ -50,7 +50,7 @@ def create_app(config: BridgeConfig, *, im: LarkIMClient | None = None, connect:
 
     @app.get(config.api_prefix + "/healthz")
     async def health() -> dict:
-        return {"status": "ok", "lark_connected": bool(transport and transport.connected)}
+        return {"status": "ok", "lark_connected": bool(transport and transport.connected), "stats": dict(bridge.stats)}
 
     async def receive(request: Request, purpose: bytes, limit: int) -> tuple[dict, bytes] | JSONResponse:
         headers = request.headers
