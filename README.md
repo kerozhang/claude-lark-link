@@ -75,3 +75,7 @@ claude-lark-link serve
 Install the Python bridge from GitHub with the pip command above. Run `claude-lark-link init`, enter your app credentials and app-scoped owner Open ID in the generated `.env`, and list exact local workspace directories in `config.json`. Enable the bot and its private message permissions. Subscribe to `im.message.receive_v1` and `card.action.trigger` using the platform's long-connection option. Start the bridge with `claude-lark-link serve` and install `lark-link` from the GitHub marketplace `kerozhang/claude-lark-link` in Claude Desktop Code.
 
 Manual pairing is the default. Run `/lark-link` in the target Desktop session and send `/bind <code>` in the bot's private chat. To connect automatically, enable `allow_auto_connect` in the bridge and select `auto` in the plugin. Closed sessions and conversation history are outside the scope of discovery. Use `/sessions`, `/send <task>`, `/model` and `/unbind` from the configured private chat. Host-managed gateway models are changed in Desktop.
+
+## 许可证 / License
+
+[MIT License](LICENSE)

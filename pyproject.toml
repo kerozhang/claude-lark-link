@@ -7,6 +7,8 @@ name = "claude-lark-link"
 version = "0.1.0"
 description = "Control local Claude Desktop Code sessions from Feishu / Lark — send tasks, view progress, approve permissions, answer questions, and switch models."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115,<1",
