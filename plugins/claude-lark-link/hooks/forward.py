@@ -18,6 +18,8 @@ TASK_PREFIX = "[Feishu / Lark task]:\n"
 # UTF-8 bytes per character after JSON escaping, leaving room for the envelope.
 MAX_HOOK_BODY_BYTES = 64 * 1024
 MAX_ANSWER_CHARS = 12000
+MAX_PLAN_ITEMS = 12
+MAX_PLAN_LABEL_CHARS = 800
 _FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 EVENTS = {"UserPromptSubmit", "Stop", "StopFailure", "SessionEnd", "PostToolUse", "PostToolUseFailure",
           "PermissionRequest", "Elicitation", "Notification"}
@@ -144,6 +146,38 @@ def prepare_answer(raw: str) -> tuple[str, str]:
     return head, tail
 
 
+def plan_update(tool: str, inputs: dict) -> dict | None:
+    if tool == "mcp__ccd_turn__wrap_up":
+        return {"finish": True} if inputs.get("blocked") is not True else None
+    key = "todos" if tool == "TodoWrite" else "items"
+    if key in inputs:
+        items = inputs[key]
+        if not isinstance(items, list) or len(items) > MAX_PLAN_ITEMS:
+            return None
+        checked = []
+        for item in items:
+            if not isinstance(item, dict):
+                return None
+            content, status = item.get("content"), item.get("status")
+            if not isinstance(content, str) or status not in ("pending", "in_progress", "completed"):
+                return None
+            if len(content) > MAX_PLAN_LABEL_CHARS:
+                content = "任务名称过长，请在 Desktop 查看。"
+            checked.append({"content": content, "status": status})
+        return {"items": checked}
+    if tool != "mcp__ccd_turn__update_plan":
+        return None
+    if inputs.get("advance") is True:
+        return {"advance": True}
+    update = {}
+    done, start = inputs.get("done"), inputs.get("start")
+    if isinstance(done, list) and len(done) <= MAX_PLAN_ITEMS and all(type(index) is int for index in done):
+        update["done"] = done
+    if type(start) is int:
+        update["start"] = start
+    return update or None
+
+
 def native_event(event: dict, root: Path) -> dict:
     name = event.get("hook_event_name")
     if not isinstance(name, str) or name not in EVENTS:
@@ -177,6 +211,11 @@ def native_event(event: dict, root: Path) -> dict:
             payload["schema"] = event.get("requested_schema")
     elif isinstance(tool, str):
         payload["tool"] = tool
+        if name == "PostToolUse" and tool in ("mcp__ccd_turn__update_plan", "mcp__ccd_turn__wrap_up", "TodoWrite"):
+            update = plan_update(tool, inputs)
+            if update is None:
+                return {}
+            payload["plan_update"] = update
         if name == "PermissionRequest":
             if tool == "AskUserQuestion":
                 payload["questions"] = inputs.get("questions")
