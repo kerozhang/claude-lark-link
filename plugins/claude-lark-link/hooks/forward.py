@@ -14,6 +14,11 @@ from time import time
 
 ROOT = Path.home() / ".claude-lark-link"
 TASK_PREFIX = "[Feishu / Lark task]:\n"
+# These limits match the bridge protocol. The cleaned answer uses at most four
+# UTF-8 bytes per character after JSON escaping, leaving room for the envelope.
+MAX_HOOK_BODY_BYTES = 64 * 1024
+MAX_ANSWER_CHARS = 12000
+_FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 EVENTS = {"UserPromptSubmit", "Stop", "StopFailure", "SessionEnd", "PostToolUse", "PostToolUseFailure",
           "PermissionRequest", "Elicitation", "Notification"}
 REVIEW_INPUTS = {
@@ -42,7 +47,7 @@ def bridge_request(root: Path, payload: dict, *, wait: bool = False) -> str | di
     port, prefix, key = settings(root)
     envelope = {**payload, "at": int(time()), "nonce": token_hex(16)}
     body = json.dumps(envelope, ensure_ascii=False).encode()
-    if len(body) > 24576:
+    if len(body) > MAX_HOOK_BODY_BYTES:
         return None
     signature = digest(key, b"hook:" + body, "sha256").hex()
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=1.5)
@@ -97,6 +102,48 @@ def review_details(tool: str, inputs: dict, mode: object) -> tuple[str, bool]:
     return text, complete
 
 
+def _open_fence(text: str) -> str:
+    """Return the delimiter of a code block still open at the end of text."""
+    fence = ""
+    for line in text.splitlines():
+        match = _FENCE_OPEN.match(line)
+        if not match:
+            continue
+        marker, info = match.groups()
+        if fence:
+            if marker.startswith(fence) and not info.strip():
+                fence = ""
+        elif len(marker) <= 16 and (marker[0] != "`" or "`" not in info):
+            fence = marker
+    return fence
+
+
+def prepare_answer(raw: str) -> tuple[str, str]:
+    cleaned = "".join(char for char in raw.replace("\r\n", "\n") if char.isprintable() or char in "\n\t").rstrip()
+    if len(cleaned) <= MAX_ANSWER_CHARS:
+        return cleaned, ""
+
+    # Leave room for code fence markers and give the conclusion more space.
+    head_end = 4800
+    tail_start = len(cleaned) - 7100
+    head_break = cleaned.rfind("\n", head_end - 160, head_end)
+    tail_break = cleaned.find("\n", tail_start - 1, tail_start + 160)
+    if head_break != -1:
+        head_end = head_break
+    if tail_break != -1 and cleaned[tail_break + 1:].strip():
+        tail_start = tail_break + 1
+
+    head, tail = cleaned[:head_end], cleaned[tail_start:]
+    head_fence = _open_fence(head)
+    if head_fence:
+        head += "\n" + head_fence
+    line_start = cleaned.rfind("\n", 0, tail_start) + 1
+    tail_fence = _open_fence(cleaned[:line_start])
+    if tail_fence:
+        tail = tail_fence + "\n" + tail
+    return head, tail
+
+
 def native_event(event: dict, root: Path) -> dict:
     name = event.get("hook_event_name")
     if not isinstance(name, str) or name not in EVENTS:
@@ -116,8 +163,11 @@ def native_event(event: dict, root: Path) -> dict:
     elif name == "Stop":
         answer = event.get("last_assistant_message")
         if isinstance(answer, str):
-            payload["answer"] = "".join(char for char in answer[:1600] if char.isprintable() or char in "\n\t")
-            payload["answer_truncated"] = len(answer) > 1600
+            head, tail = prepare_answer(answer)
+            payload["answer"] = head
+            payload["answer_truncated"] = bool(tail)
+            if tail:
+                payload["answer_tail"] = tail
     elif name == "Notification":
         payload["notification"] = event.get("notification_type")
     elif name == "Elicitation":

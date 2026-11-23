@@ -17,7 +17,7 @@ from starlette.responses import JSONResponse
 from .bridge import Bridge
 from .config import BridgeConfig
 from .lark_client import LarkIMClient
-from .protocol import DECISION_EVENTS, SIGNATURE_HEADER, decision_proof
+from .protocol import DECISION_EVENTS, MAX_HOOK_BODY_BYTES, SIGNATURE_HEADER, decision_proof
 
 
 def create_app(config: BridgeConfig, *, im: LarkIMClient | None = None, connect: bool = True) -> FastAPI:
@@ -107,7 +107,7 @@ def create_app(config: BridgeConfig, *, im: LarkIMClient | None = None, connect:
 
     @app.post(config.api_prefix + "/hook")
     async def hook(request: Request) -> JSONResponse:
-        received = await receive(request, b"hook:", 24576)
+        received = await receive(request, b"hook:", MAX_HOOK_BODY_BYTES)
         if isinstance(received, JSONResponse):
             return received
         payload, signature = received

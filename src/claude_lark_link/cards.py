@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .redaction import format_card_markdown
-
 DESKTOP_ACTION = "claude_lark_link_approval"
 DESKTOP_SESSIONS_ACTION = "claude_lark_link_sessions"
 BRAND = "Claude Lark Link"
@@ -84,7 +82,8 @@ def desktop_status_card(
 
 
 def desktop_result_card(
-    alias: str, session: str, phase: str, *, task: str, answer: str, truncated: bool = False,
+    alias: str, session: str, phase: str, *, task: str, answer: str, notice: str = "",
+    page: str = "",
 ) -> dict[str, Any]:
     if phase == "本轮异常结束":
         label, color = "任务异常结束", "red"
@@ -96,10 +95,13 @@ def desktop_result_card(
         label, color = "任务已完成", "green"
         answer = answer or "本轮未返回可同步的文本，请在 Claude Desktop 中查看。"
     elements: list[dict[str, Any]] = [_line(task)] if task else []
-    elements.append({"tag": "markdown", "content": format_card_markdown(answer)})
-    if truncated:
-        elements.append(_line("内容较长，请到 Desktop 查看完整回答。"))
-    return _card(f"Desktop {label}", elements, color, subtitle=f"{BRAND} · {alias} · #{session}")
+    if notice:
+        elements.append(_line(notice))
+    elements.append({"tag": "markdown", "content": answer})
+    subtitle = f"{BRAND} · {alias} · #{session}"
+    if page:
+        subtitle += f" · {page}"
+    return _card(f"Desktop {label}", elements, color, subtitle=subtitle)
 
 
 @dataclass(frozen=True)

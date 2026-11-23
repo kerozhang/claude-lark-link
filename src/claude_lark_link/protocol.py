@@ -13,7 +13,9 @@ from typing import Any
 DECISION_EVENTS = {"PermissionRequest", "Elicitation"}
 NATIVE_NOTICES = ("permission_prompt", "elicitation_dialog", "elicitation_url_dialog")
 REMOTE_TASK_PREFIX = "[Feishu / Lark task]:\n"
-MAX_ANSWER_CHARS = 1600
+MAX_HOOK_BODY_BYTES = 64 * 1024
+# Keep in sync with the standalone plugin hook's answer limit.
+MAX_ANSWER_CHARS = 12000
 SIGNATURE_HEADER = "X-Claude-Lark-Signature"
 INBOX_HEADER = "X-Claude-Lark-Inbox"
 

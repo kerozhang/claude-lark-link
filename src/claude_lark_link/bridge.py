@@ -37,7 +37,7 @@ from .protocol import (
     task_excerpt,
     valid_elicitation_content,
 )
-from .redaction import display_text, redact_credential_args, sanitize_result_markdown
+from .redaction import display_text, redact_credential_args, sanitize_result_markdown, split_card_markdown
 
 logger = logging.getLogger(__name__)
 TURN_END = {"Stop": "本轮结束", "StopFailure": "本轮异常结束", "SessionEnd": "会话已关闭"}
@@ -262,6 +262,39 @@ class Bridge:
         except Exception:
             logger.warning("Claude Lark Link could not update the turn card")
 
+    async def send_result(self, turn: RemoteTurn, payload: dict) -> None:
+        delivery = turn.delivery
+        answer = payload.get("answer") if payload.get("event") == "Stop" else None
+        tail = payload.get("answer_tail") if isinstance(answer, str) else None
+        if isinstance(answer, str):
+            answer = answer[:MAX_ANSWER_CHARS]
+            remaining = MAX_ANSWER_CHARS - len(answer)
+            tail = sanitize_result_markdown(tail[-remaining:]) if isinstance(tail, str) and remaining else ""
+            answer = sanitize_result_markdown(answer)
+        else:
+            answer = ""
+
+        pages = split_card_markdown(answer)
+        tail_page = len(pages)
+        if tail:
+            pages.extend(split_card_markdown(tail))
+        task = display_text(task_excerpt(delivery.text), 240)
+        for index, text in enumerate(pages):
+            notice = ""
+            if tail and index == tail_page:
+                notice = "中间内容已省略，以下为回复末尾。完整回答请在 Desktop 查看。"
+            elif not tail and index == len(pages) - 1 and payload.get("answer_truncated") is True:
+                notice = "内容较长，请到 Desktop 查看完整回答。"
+            card = desktop_result_card(
+                self.aliases[delivery.root], delivery.sid[:8], turn.phase, task=task if index == 0 else "",
+                answer=text, notice=notice, page=f"{index + 1}/{len(pages)}" if len(pages) > 1 else "",
+            )
+            try:
+                await self.im.send_interactive(delivery.chat, card)
+            except Exception:
+                # Keep trying the remaining pages so an earlier failure does not hide the conclusion.
+                logger.warning("Claude Lark Link could not send result page %d/%d", index + 1, len(pages))
+
     def forget_turn(self, key: tuple[Path, str]) -> None:
         turn = self.turns.pop(key, None)
         for review in self.reviews.values():
@@ -300,12 +333,7 @@ class Bridge:
             if bound:
                 turn.phase = TURN_END[event]
                 self.refresh(turn)
-                answer = payload.get("answer") if event == "Stop" else None
-                card = desktop_result_card(self.aliases[key[0]], key[1][:8], turn.phase,
-                                           task=display_text(task_excerpt(turn.delivery.text), 240),
-                                           answer=sanitize_result_markdown(answer[:MAX_ANSWER_CHARS]) if isinstance(answer, str) else "",
-                                           truncated=payload.get("answer_truncated") is True)
-                self.spawn(self.im.send_interactive(turn.delivery.chat, card))
+                self.spawn(self.send_result(turn, payload))
             return None
         if not self.inbox.is_paired(*key, turn.delivery.chat):
             return None
