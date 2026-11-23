@@ -174,10 +174,76 @@ async def test_manual_pairing_and_only_remote_turn_updates_original_card(config,
     patches = [(call.args[0], json.dumps(call.args[1], ensure_ascii=False)) for call in im.update_interactive.await_args_list]
     assert all(message == queued for message, _ in patches)
     assert any("Desktop 已领取" in card for _, card in patches)
-    assert any("本轮结束" in card and "读取文件" in card for _, card in patches)
+    assert any("本轮结束" in card for _, card in patches)
+    assert all("读取文件" not in card and "任务清单" not in card for _, card in patches)
     result = json.dumps(cards[-1][2], ensure_ascii=False)
     assert "**Summary**" in result and "src/demo.py" in result and "example.invalid" not in result
     assert len(cards) == before + 2
+
+
+async def test_progress_card_mirrors_desktop_checklist(config, setup, monkeypatch):
+    _, bridge, transport, im, cards = setup
+    who, pair = await bind(config, bridge, transport)
+    remote = await start_turn(config, bridge, transport, who, pair)
+    queued = cards[-1][1]
+    turn = bridge.turns[bridge.session_key(who)]
+    native_event = run_path(str(Path(__file__).resolve().parents[1] / "plugins/claude-lark-link/hooks/forward.py"))["native_event"]
+    sent = []
+    monkeypatch.setitem(native_event.__globals__, "bridge_request", lambda _root, payload, **_: sent.append(payload))
+
+    async def call(tool, inputs, *, turn_id=remote["turn_id"], event_name="PostToolUse"):
+        native_event({"hook_event_name": event_name, "session_id": remote["session"], "cwd": remote["cwd"],
+                      "prompt_id": turn_id, "tool_name": tool, "tool_input": inputs}, config.data_dir)
+        while sent:
+            await bridge.hook(sent.pop(0))
+
+    def checklist(card):
+        return card["body"]["elements"][-1]["text"]["content"].splitlines()
+
+    tool = "mcp__ccd_turn__update_plan"
+    items = [{"content": "了解项目结构", "status": "in_progress", "session": "not relayed"},
+             {"content": "修改进度卡", "status": "pending"},
+             {"content": "运行验收 --token fixture-hidden", "status": "pending"}]
+    await call(tool, {"items": items}, turn_id=str(uuid4()))
+    await call(tool, {"items": items}, event_name="PostToolUseFailure")
+    await call("Bash", {"command": "not relayed"})
+    assert not turn.plan
+    await call(tool, {"items": items, "scope": "continuation"})
+    await turn.worker
+    message, card = im.update_interactive.await_args.args
+    assert message == queued
+    assert checklist(card) == ["◉ 了解项目结构", "○ 修改进度卡", "○ 运行验收 [REDACTED]"]
+    assert "not relayed" not in json.dumps(card)
+
+    await call(tool, {"advance": True})
+    await call("mcp__ccd_turn__wrap_up", {"blocked": True, "recap": "not relayed"})
+    assert checklist(bridge.status(turn.delivery, turn.phase, turn)) == [
+        "✓ 了解项目结构", "◉ 修改进度卡", "○ 运行验收 [REDACTED]",
+    ]
+    await call(tool, {"done": [2], "start": 3})
+    assert turn.plan[-1][1] == "in_progress"
+    await call("mcp__ccd_turn__wrap_up", {"recap": "not relayed"})
+    await bridge.hook({**remote, "event": "Stop", "answer": "Done"})
+    await turn.worker
+
+    message, card = im.update_interactive.await_args.args
+    assert message == queued
+    assert card["body"]["elements"][0]["content"] == "**本轮结束**"
+    assert checklist(card) == ["✓ 了解项目结构", "✓ 修改进度卡", "✓ 运行验收 [REDACTED]"]
+    assert "not relayed" not in json.dumps(card)
+
+
+def test_native_plan_hook_forwards_only_todo_titles_and_statuses(monkeypatch, tmp_path):
+    native_event = run_path(str(Path(__file__).resolve().parents[1] / "plugins/claude-lark-link/hooks/forward.py"))["native_event"]
+    sent = []
+    monkeypatch.setitem(native_event.__globals__, "bridge_request", lambda _root, payload, **_: sent.append(payload))
+    native_event({"hook_event_name": "PostToolUse", "session_id": str(uuid4()), "cwd": str(tmp_path),
+                  "prompt_id": str(uuid4()), "tool_name": "TodoWrite",
+                  "tool_input": {"todos": [{"content": "检查目录", "status": "pending", "activeForm": "Extra"}]},
+                  "tool_response": {"private": "not relayed"}}, tmp_path)
+    assert len(sent) == 1
+    assert sent[0]["plan_update"] == {"items": [{"content": "检查目录", "status": "pending"}]}
+    assert "Extra" not in str(sent[0]) and "not relayed" not in str(sent[0])
 
 
 @pytest.mark.parametrize("oversized", [False, True])

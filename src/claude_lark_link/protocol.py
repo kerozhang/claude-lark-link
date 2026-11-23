@@ -10,6 +10,8 @@ from hmac import digest
 from pathlib import Path
 from typing import Any
 
+from .redaction import display_text, redact_credential_args
+
 DECISION_EVENTS = {"PermissionRequest", "Elicitation"}
 NATIVE_NOTICES = ("permission_prompt", "elicitation_dialog", "elicitation_url_dialog")
 REMOTE_TASK_PREFIX = "[Feishu / Lark task]:\n"
@@ -18,6 +20,9 @@ MAX_HOOK_BODY_BYTES = 64 * 1024
 MAX_ANSWER_CHARS = 12000
 SIGNATURE_HEADER = "X-Claude-Lark-Signature"
 INBOX_HEADER = "X-Claude-Lark-Inbox"
+PLAN_TOOLS = {"mcp__ccd_turn__update_plan", "mcp__ccd_turn__wrap_up", "TodoWrite"}
+MAX_PLAN_ITEMS = 12
+PlanItem = tuple[str, str]
 
 _PROMPT_BLOCK = re.compile(
     r"```[\s\S]*?(?:```|\Z)|<pasted_content\b[^>]*>[\s\S]*?(?:</pasted_content>|\Z)|"
@@ -49,6 +54,53 @@ def task_excerpt(value: object) -> str | None:
         lambda match: "" if match.group("internal") else "[已省略粘贴内容]", text,
     ).strip()
     return excerpt[:600] if excerpt or not text else None
+
+
+def apply_plan_update(current: tuple[PlanItem, ...], update: object) -> tuple[PlanItem, ...]:
+    """Apply one successful Desktop task-list update without inventing any steps."""
+    if not isinstance(update, dict):
+        return current
+    if "items" in update:
+        raw = update["items"]
+        if not isinstance(raw, list) or len(raw) > MAX_PLAN_ITEMS:
+            return current
+        items = []
+        for row in raw:
+            if not isinstance(row, dict):
+                return current
+            content, status = row.get("content"), row.get("status")
+            if (not isinstance(content, str) or len(content) > 800
+                    or status not in ("pending", "in_progress", "completed")):
+                return current
+            content = display_text(redact_credential_args(content), 240)
+            items.append((content or "未命名任务", status))
+        return tuple(items)
+    if not current:
+        return current
+    if update.get("finish") is True:
+        return tuple((content, "completed") for content, _ in current)
+
+    items = list(current)
+    if update.get("advance") is True:
+        active = next((index for index, (_, status) in enumerate(items) if status == "in_progress"), None)
+        if active is not None:
+            items[active] = (items[active][0], "completed")
+        start = next((index + 1 for index, (_, status) in enumerate(items) if status == "pending"), None)
+    else:
+        done, start = update.get("done", []), update.get("start")
+        if (not isinstance(done, list) or len(done) > MAX_PLAN_ITEMS
+                or any(type(index) is not int or not 1 <= index <= len(items) for index in done)
+                or start is not None and (type(start) is not int or not 1 <= start <= len(items))):
+            return current
+        for index in done:
+            items[index - 1] = (items[index - 1][0], "completed")
+    if start is not None:
+        for index, (content, status) in enumerate(items, 1):
+            if index == start:
+                items[index - 1] = (content, "in_progress")
+            elif status == "in_progress":
+                items[index - 1] = (content, "pending")
+    return tuple(items)
 
 
 def decision_proof(key: bytes, signature: bytes, decision: str | dict) -> str:

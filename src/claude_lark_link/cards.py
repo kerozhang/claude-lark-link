@@ -5,9 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from .protocol import PlanItem
+
 DESKTOP_ACTION = "claude_lark_link_approval"
 DESKTOP_SESSIONS_ACTION = "claude_lark_link_sessions"
 BRAND = "Claude Lark Link"
+_PLAN_MARK = {"pending": "○", "in_progress": "◉", "completed": "✓"}
 
 
 def _plain(text: str) -> dict[str, str]:
@@ -48,19 +51,12 @@ def notice_card(label: str) -> dict[str, Any]:
     return _card(BRAND, [_line(label)])
 
 
-def _desktop_context(task: str, steps: tuple[str, ...], count: int) -> list[dict[str, Any]]:
-    elements: list[dict[str, Any]] = []
-    if task:
-        elements.extend([{"tag": "markdown", "content": "**本轮任务**"}, _line(task)])
-    if steps:
-        first = count - len(steps) + 1
-        numbered = "\n".join(f"{index}. {step}" for index, step in enumerate(steps, first))
-        elements.extend([{"tag": "markdown", "content": f"**最近步骤 · 共 {count} 步**"}, _line(numbered)])
-    return elements
+def _desktop_context(task: str) -> list[dict[str, Any]]:
+    return [{"tag": "markdown", "content": "**本轮任务**"}, _line(task)] if task else []
 
 
 def desktop_status_card(
-    alias: str, session: str, phase: str, *, title: str, task: str, steps: tuple[str, ...], count: int,
+    alias: str, session: str, phase: str, *, title: str, task: str, plan: tuple[PlanItem, ...] = (),
 ) -> dict[str, Any]:
     colors = {
         "等待飞书审批": "orange",
@@ -72,7 +68,10 @@ def desktop_status_card(
         "会话已关闭": "grey",
     }
     elements: list[dict[str, Any]] = [{"tag": "markdown", "content": f"**{phase}**"}]
-    elements.extend(_desktop_context(task, steps, count))
+    elements.extend(_desktop_context(task if task != title else ""))
+    if plan:
+        elements.append({"tag": "markdown", "content": "**任务清单**"})
+        elements.append(_line("\n".join(f"{_PLAN_MARK[status]} {label}" for label, status in plan)))
     return _card(
         title or "Claude Desktop 会话",
         elements,
@@ -211,10 +210,10 @@ def _question_form(request: str, questions: list[dict[str, Any]]) -> dict[str, A
 
 
 def desktop_question_card(
-    alias: str, session: str, label: str, *, title: str, task: str, steps: tuple[str, ...], count: int,
+    alias: str, session: str, label: str, *, title: str, task: str,
     questions: list[dict[str, Any]], request: str = "",
 ) -> dict[str, Any]:
-    elements: list[dict[str, Any]] = [_line(label), *_desktop_context(task, steps, count)]
+    elements: list[dict[str, Any]] = [_line(label), *_desktop_context(task)]
     if request:
         elements.extend([
             _question_form(request, questions),
@@ -231,10 +230,10 @@ def desktop_question_card(
 
 
 def desktop_tool_review_card(
-    alias: str, session: str, label: str, *, title: str, task: str, steps: tuple[str, ...], count: int,
+    alias: str, session: str, label: str, *, title: str, task: str,
     subject: str, details: list[str], allow: bool, request: str = "",
 ) -> dict[str, Any]:
-    elements: list[dict[str, Any]] = [_line(label), *_desktop_context(task, steps, count), {"tag": "hr"}]
+    elements: list[dict[str, Any]] = [_line(label), *_desktop_context(task), {"tag": "hr"}]
     elements.extend(_line(detail) for detail in details)
     if request:
         if allow:
@@ -245,12 +244,12 @@ def desktop_tool_review_card(
 
 
 def desktop_elicitation_card(
-    alias: str, session: str, label: str, *, title: str, task: str, steps: tuple[str, ...], count: int,
+    alias: str, session: str, label: str, *, title: str, task: str,
     server: str, message: str, fields: list[dict[str, Any]] | None, request: str = "",
 ) -> dict[str, Any]:
     elements: list[dict[str, Any]] = [
         _line(label),
-        *_desktop_context(task, steps, count),
+        *_desktop_context(task),
         _line(f"MCP 服务：{server}\n{message}"),
     ]
     if request and fields:
@@ -298,14 +297,14 @@ def desktop_input_notice(
 
 
 def desktop_approval_card(
-    alias: str, session: str, phase: str, *, title: str, task: str, steps: tuple[str, ...], count: int,
+    alias: str, session: str, phase: str, *, title: str, task: str,
     path: str, change: str, request: str = "",
 ) -> dict[str, Any]:
     elements: list[dict[str, Any]] = [
         {"tag": "markdown", "content": f"**{phase}**"},
         _line(f"{change}\n{path}"),
     ]
-    context = _desktop_context(task, steps, count)
+    context = _desktop_context(task)
     elements.extend([{"tag": "hr"}, *(context or [_line("本轮任务尚未同步，请在 Desktop 核对。")])])
     if request:
         elements.extend([

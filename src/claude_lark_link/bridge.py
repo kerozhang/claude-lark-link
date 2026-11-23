@@ -5,8 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from collections import deque
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from secrets import token_hex
 from time import monotonic
@@ -30,6 +29,9 @@ from .lark_client import LarkIMClient
 from .protocol import (
     MAX_ANSWER_CHARS,
     NATIVE_NOTICES,
+    PLAN_TOOLS,
+    PlanItem,
+    apply_plan_update,
     elicitation_fields,
     parse_answers,
     parse_questions,
@@ -41,9 +43,6 @@ from .redaction import display_text, redact_credential_args, sanitize_result_mar
 
 logger = logging.getLogger(__name__)
 TURN_END = {"Stop": "本轮结束", "StopFailure": "本轮异常结束", "SessionEnd": "会话已关闭"}
-STEPS = {"Read": "读取文件", "Grep": "搜索内容", "Glob": "查找文件", "Edit": "修改文件", "Write": "写入文件",
-         "Bash": "执行终端命令", "PowerShell": "执行终端命令", "Agent": "运行子任务", "WebFetch": "读取网页",
-         "WebSearch": "搜索网页", "AskUserQuestion": "收集回答", "ExitPlanMode": "确认计划"}
 REVIEW_TOOLS = {"Bash", "PowerShell", "ExitPlanMode", "Edit", "Write"}
 
 
@@ -52,8 +51,7 @@ class RemoteTurn:
     delivery: DesktopDelivery
     id: str
     phase: str = "运行中"
-    steps: deque[str] = field(default_factory=lambda: deque(maxlen=5))
-    count: int = 0
+    plan: tuple[PlanItem, ...] = ()
     worker: asyncio.Task | None = None
     message: str = ""
     last_card: dict | None = None
@@ -167,7 +165,7 @@ class Bridge:
         task = display_text(task_excerpt(delivery.text), 240)
         return desktop_status_card(
             self.aliases[delivery.root], delivery.sid[:8], phase, title=display_text(task, 72), task=task,
-            steps=tuple(turn.steps) if turn else (), count=turn.count if turn else 0,
+            plan=turn.plan if turn else (),
         )
 
     async def command(self, chat: str, action: str, value: str, *, session: str = "") -> None:
@@ -338,11 +336,15 @@ class Bridge:
         if not self.inbox.is_paired(*key, turn.delivery.chat):
             return None
         tool = payload.get("tool")
-        if event in ("PostToolUse", "PostToolUseFailure") and isinstance(tool, str) and tool in STEPS:
-            turn.phase = "运行中"
-            turn.steps.append(STEPS[tool] + ("（未完成）" if event.endswith("Failure") else ""))
-            turn.count += 1
-            self.refresh(turn)
+        if event in ("PostToolUse", "PostToolUseFailure") and isinstance(tool, str):
+            waiting = turn.phase in ("等待 Desktop 输入", "等待 Desktop 授权")
+            if waiting:
+                turn.phase = "运行中"
+            plan = (apply_plan_update(turn.plan, payload.get("plan_update"))
+                    if event == "PostToolUse" and tool in PLAN_TOOLS else turn.plan)
+            if waiting or plan != turn.plan:
+                turn.plan = plan
+                self.refresh(turn)
         if event in ("PermissionRequest", "Elicitation"):
             return await self.review(key, turn, payload)
         if event == "Notification" and payload.get("notification") in NATIVE_NOTICES and turn.phase == "运行中":
@@ -423,7 +425,7 @@ class Bridge:
             return None
         alias, short = self.aliases[key[0]], key[1][:8]
         request = token_hex(16)
-        context = dict(title="", task=display_text(task_excerpt(turn.delivery.text), 200), steps=(), count=0)
+        context = dict(title="", task=display_text(task_excerpt(turn.delivery.text), 200))
         if questions:
             shown = [dict(question=display_text(row["question"], 1000), multiSelect=row["multiSelect"],
                           labels=[display_text(label, 100) for label in row["labels"]]) for row in questions]
