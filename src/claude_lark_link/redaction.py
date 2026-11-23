@@ -54,23 +54,71 @@ def display_text(value: object, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
+_CARD_MARKDOWN_CHARS = 3500
+_FENCE_LINE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+_FENCE_LANGUAGE = re.compile(r"[A-Za-z0-9_+.-]{1,32}")
+
+
+def _next_fence(line: str, fence: tuple[str, str]) -> tuple[str, str]:
+    match = _FENCE_LINE.match(line)
+    if not match:
+        return fence
+    marker, info = match.groups()
+    if fence[0]:
+        return ("", "") if marker.startswith(fence[0]) and not info.strip() else fence
+    if len(marker) > 16 or (marker[0] == "`" and "`" in info):
+        return fence
+    info = info.strip()
+    language = info.split(maxsplit=1)[0] if info else ""
+    return marker, language if _FENCE_LANGUAGE.fullmatch(language) else ""
+
+
 def format_card_markdown(text: str) -> str:
     """Convert ATX headings to bold outside code fences for Feishu/Lark Markdown cards."""
     lines: list[str] = []
-    fence = ""
+    fence = ("", "")
     for line in text.splitlines():
-        marker = re.match(r"^\s*(`{3,}|~{3,})", line)
-        if marker:
-            if not fence:
-                fence = marker[1][0]
-            elif fence == marker[1][0]:
-                fence = ""
-        if not fence and not marker:
+        fence = _next_fence(line, fence)
+        if not fence[0]:
             match = re.match(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$", line)
             if match:
                 line = f"**{match[1].removeprefix('**').removesuffix('**')}**"
         lines.append(line)
     return "\n".join(lines)
+
+
+def split_card_markdown(answer: str) -> list[str]:
+    """Split inside the card budget while keeping fenced code readable on each page."""
+    text = format_card_markdown(answer)
+    if len(text) <= _CARD_MARKDOWN_CHARS:
+        return [text]
+
+    pages = []
+    start = scan_from = 0
+    fence = ("", "")
+    while start < len(text):
+        marker, language = fence
+        opener = marker + language + "\n" if marker else ""
+        # Leave room to close a code fence at the end of the page.
+        end = min(len(text), start + _CARD_MARKDOWN_CHARS - len(opener) - 17)
+        if end < len(text):
+            paragraph = text.rfind("\n\n", end - 400, end)
+            newline = text.rfind("\n", end - 400, end)
+            if paragraph != -1:
+                end = paragraph + 2
+            elif newline != -1:
+                end = newline + 1
+
+        # Scan complete original lines only, even if a long line spans pages.
+        scan_end = end if end == len(text) else text.rfind("\n", scan_from, end) + 1
+        if scan_end > scan_from:
+            for line in text[scan_from:scan_end].splitlines():
+                fence = _next_fence(line, fence)
+            scan_from = scan_end
+        closer = ("" if text[end - 1] == "\n" else "\n") + fence[0] if fence[0] else ""
+        pages.append(opener + text[start:end] + closer)
+        start = end
+    return pages
 
 
 def sanitize_result_markdown(text: str) -> str:

@@ -5,6 +5,7 @@ import json
 from dataclasses import replace
 from hmac import digest
 from pathlib import Path
+from runpy import run_path
 from time import time
 from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock
@@ -73,7 +74,8 @@ def target(config: BridgeConfig) -> dict:
 
 
 def encoded(config, path, payload, *, when=None, key=None):
-    body = json.dumps({**payload, "nonce": uuid4().hex, "at": int(time()) if when is None else when}).encode()
+    body = json.dumps({**payload, "nonce": uuid4().hex, "at": int(time()) if when is None else when},
+                      ensure_ascii=False).encode()
     signature = digest(key or bytes.fromhex(config.hook_token), path.encode() + b":" + body, "sha256").hex()
     return body, {"content-type": "application/json", SIGNATURE_HEADER: signature}
 
@@ -176,6 +178,51 @@ async def test_manual_pairing_and_only_remote_turn_updates_original_card(config,
     result = json.dumps(cards[-1][2], ensure_ascii=False)
     assert "**Summary**" in result and "src/demo.py" in result and "example.invalid" not in result
     assert len(cards) == before + 2
+
+
+@pytest.mark.parametrize("oversized", [False, True])
+async def test_result_pages_keep_the_final_choices(config, setup, monkeypatch, oversized):
+    app, bridge, transport, _, cards = setup
+    who, pair = await bind(config, bridge, transport)
+    remote = await start_turn(config, bridge, transport, who, pair)
+    turn = bridge.turns[bridge.session_key(who)]
+    before = len(cards)
+    line = "内容：" + "测" * 100 + "\n"
+    opening = "# 分析\n\n```text\n"
+    middle = "只在未截断时出现的中间内容\n"
+    ending = "```\n\n请选择：\n1. 继续处理\n2. 保留现状\n\nhttps://example.invalid/private"
+    section = line * (100 if oversized else 46)
+    answer = opening + section + middle + section + ending
+
+    native_event = run_path(str(Path(__file__).resolve().parents[1] / "plugins/claude-lark-link/hooks/forward.py"))["native_event"]
+    hook_payload = {}
+    monkeypatch.setitem(native_event.__globals__, "bridge_request", lambda _root, payload, **_: hook_payload.update(payload))
+    native_event({"hook_event_name": "Stop", "session_id": remote["session"], "cwd": remote["cwd"],
+                  "prompt_id": remote["turn_id"], "last_assistant_message": answer}, config.data_dir)
+    assert hook_payload["answer_truncated"] is oversized
+    body, headers = encoded(config, "hook", hook_payload)
+    assert 24576 < len(body) < 65536
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=f"http://127.0.0.1:{config.port}") as client:
+        response = await client.post(config.api_prefix + "/hook", content=body, headers=headers)
+    assert response.status_code == 200
+    await asyncio.gather(turn.worker, *bridge.background)
+
+    results = [card for _, _, card in cards[before:]]
+    assert len(results) > 1
+    for index, card in enumerate(results, 1):
+        assert card["header"]["subtitle"]["content"].endswith(f" · {index}/{len(results)}")
+        assert len(json.dumps(card, ensure_ascii=False).encode()) < 30000
+        markdown = next(element["content"] for element in card["body"]["elements"] if element["tag"] == "markdown")
+        assert sum(line.startswith("```") for line in markdown.splitlines()) % 2 == 0
+    combined = json.dumps(results, ensure_ascii=False)
+    last = json.dumps(results[-1], ensure_ascii=False)
+    assert "**分析**" in combined
+    assert "请选择" in last and "1. 继续处理" in last and "2. 保留现状" in last
+    assert "example.invalid" not in combined
+    assert ("中间内容已省略" in combined) is oversized
+    assert (middle.strip() in combined) is not oversized
+    if not oversized:
+        assert combined.count("内容：") == 92
 
 
 async def wait_pending(bridge) -> tuple[str, object]:
